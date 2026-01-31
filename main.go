@@ -10,8 +10,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/user/lb/internal/crypto"
-	"github.com/user/lb/internal/db"
+	"github.com/MQ37/lockbox/internal/crypto"
+	"github.com/MQ37/lockbox/internal/db"
 	"github.com/spf13/cobra"
 )
 
@@ -321,8 +321,8 @@ Can be used with eval or source to set environment variables:
 
 	// run command - Run a command with secrets in environment
 	runCmd := &cobra.Command{
-		Use:                "run -- command [args...]",
-		Short:              "Run a command with secrets in environment",
+		Use:   "run -- command [args...]",
+		Short: "Run a command with secrets in environment",
 		Long: `Execute a command with all stored secrets set as environment variables.
 Usage:
   lb run -- sh -c 'echo $SECRET_VAR'

@@ -1,4 +1,4 @@
-module github.com/user/lb
+module github.com/MQ37/lockbox
 
 go 1.24.0
 
