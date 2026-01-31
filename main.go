@@ -25,7 +25,7 @@ func getStoreAndKey() (*db.Store, []byte, error) {
 	keyHex, err := store.GetConfig("encryption_key")
 	if err != nil {
 		if err == db.ErrNotFound {
-			return nil, nil, fmt.Errorf("encryption key not found. Please run 'lb init' first")
+			return nil, nil, fmt.Errorf("encryption key not found. Please run 'lockbox init' first")
 		}
 		return nil, nil, fmt.Errorf("failed to get encryption key: %w", err)
 	}
@@ -84,7 +84,7 @@ func fetchRemoteSecrets(remote string) (map[string]string, error) {
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "lb",
+		Use:   "lockbox",
 		Short: "Lockbox - A secure secret management CLI",
 		Long:  `Lockbox is a command-line tool for securely storing and managing secrets.`,
 	}
@@ -272,8 +272,8 @@ func main() {
 		Short: "Export secrets as environment variables",
 		Long: `Export all stored secrets in shell export format.
 Can be used with eval or source to set environment variables:
-  eval $(lb env)
-  source <(lb env)`,
+  eval $(lockbox env)
+  source <(lockbox env)`,
 		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			store, encKey, err := getStoreAndKey()
@@ -325,9 +325,9 @@ Can be used with eval or source to set environment variables:
 		Short: "Run a command with secrets in environment",
 		Long: `Execute a command with all stored secrets set as environment variables.
 Usage:
-  lb run -- sh -c 'echo $SECRET_VAR'
-  lb run -- env | grep SECRET
-  lb run -- ./my-app`,
+  lockbox run -- sh -c 'echo $SECRET_VAR'
+  lockbox run -- env | grep SECRET
+  lockbox run -- ./my-app`,
 		TraverseChildren: true,
 		Run: func(cmd *cobra.Command, args []string) {
 			// Check for remote flag
@@ -386,7 +386,7 @@ Usage:
 			// Need at least one argument for the command
 			if len(args) == 0 {
 				fmt.Fprintf(os.Stderr, "Error: no command provided\n")
-				fmt.Fprintf(os.Stderr, "Usage: lb run -- command [args...]\n")
+				fmt.Fprintf(os.Stderr, "Usage: lockbox run -- command [args...]\n")
 				os.Exit(1)
 			}
 

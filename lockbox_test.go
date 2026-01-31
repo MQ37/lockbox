@@ -42,9 +42,9 @@ func setupTest(t *testing.T) (dbPath string, cleanup func()) {
 	return dbPath, cleanup
 }
 
-// runLB executes the lb binary and captures output
-func runLB(args ...string) (stdout string, stderr string, exitCode int) {
-	cmd := exec.Command("./lb", args...)
+// runLockbox executes the lockbox binary and captures output
+func runLockbox(args ...string) (stdout string, stderr string, exitCode int) {
+	cmd := exec.Command("./lockbox", args...)
 
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -64,12 +64,12 @@ func runLB(args ...string) (stdout string, stderr string, exitCode int) {
 	return outBuf.String(), errBuf.String(), exitCode
 }
 
-// TestInit tests that `lb init` creates database and encryption key
+// TestInit tests that `lockbox init` creates database and encryption key
 func TestInit(t *testing.T) {
 	dbPath, cleanup := setupTest(t)
 	defer cleanup()
 
-	stdout, stderr, exitCode := runLB("init")
+	stdout, stderr, exitCode := runLockbox("init")
 
 	if exitCode != 0 {
 		t.Errorf("Expected exit code 0, got %d. Stderr: %s", exitCode, stderr)
@@ -91,13 +91,13 @@ func TestInitIdempotent(t *testing.T) {
 	defer cleanup()
 
 	// First init
-	_, _, exitCode1 := runLB("init")
+	_, _, exitCode1 := runLockbox("init")
 	if exitCode1 != 0 {
 		t.Fatalf("First init failed with exit code %d", exitCode1)
 	}
 
 	// Second init should say key already exists
-	stdout2, _, exitCode2 := runLB("init")
+	stdout2, _, exitCode2 := runLockbox("init")
 	if exitCode2 != 0 {
 		t.Errorf("Second init should succeed with exit code 0, got %d", exitCode2)
 	}
@@ -113,10 +113,10 @@ func TestSetAndGet(t *testing.T) {
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// Set a secret
-	stdout, stderr, exitCode := runLB("set", "MY_SECRET", "super_secret_value")
+	stdout, stderr, exitCode := runLockbox("set", "MY_SECRET", "super_secret_value")
 	if exitCode != 0 {
 		t.Errorf("Set failed with exit code %d. Stderr: %s", exitCode, stderr)
 	}
@@ -126,7 +126,7 @@ func TestSetAndGet(t *testing.T) {
 	}
 
 	// Get the secret back
-	stdout, stderr, exitCode = runLB("get", "MY_SECRET")
+	stdout, stderr, exitCode = runLockbox("get", "MY_SECRET")
 	if exitCode != 0 {
 		t.Errorf("Get failed with exit code %d. Stderr: %s", exitCode, stderr)
 	}
@@ -142,16 +142,16 @@ func TestSetOverwrite(t *testing.T) {
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// Set initial value
-	runLB("set", "API_KEY", "old_value")
+	runLockbox("set", "API_KEY", "old_value")
 
 	// Overwrite with new value
-	runLB("set", "API_KEY", "new_value")
+	runLockbox("set", "API_KEY", "new_value")
 
 	// Get should return new value
-	stdout, _, exitCode := runLB("get", "API_KEY")
+	stdout, _, exitCode := runLockbox("get", "API_KEY")
 	if exitCode != 0 {
 		t.Fatalf("Get failed with exit code %d", exitCode)
 	}
@@ -167,10 +167,10 @@ func TestGetNotFound(t *testing.T) {
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// Try to get non-existent key
-	_, stderr, exitCode := runLB("get", "NONEXISTENT")
+	_, stderr, exitCode := runLockbox("get", "NONEXISTENT")
 
 	if exitCode == 0 {
 		t.Errorf("Expected non-zero exit code for non-existent key, got 0")
@@ -187,13 +187,13 @@ func TestDelete(t *testing.T) {
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// Set a secret
-	runLB("set", "SECRET_TO_DELETE", "value")
+	runLockbox("set", "SECRET_TO_DELETE", "value")
 
 	// Delete it
-	stdout, stderr, exitCode := runLB("delete", "SECRET_TO_DELETE")
+	stdout, stderr, exitCode := runLockbox("delete", "SECRET_TO_DELETE")
 	if exitCode != 0 {
 		t.Errorf("Delete failed with exit code %d. Stderr: %s", exitCode, stderr)
 	}
@@ -203,7 +203,7 @@ func TestDelete(t *testing.T) {
 	}
 
 	// Verify it's gone
-	_, _, exitCode = runLB("get", "SECRET_TO_DELETE")
+	_, _, exitCode = runLockbox("get", "SECRET_TO_DELETE")
 	if exitCode == 0 {
 		t.Errorf("Expected non-zero exit code after delete, but key still exists")
 	}
@@ -215,10 +215,10 @@ func TestDeleteNotFound(t *testing.T) {
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// Try to delete non-existent key
-	_, stderr, exitCode := runLB("delete", "NONEXISTENT")
+	_, stderr, exitCode := runLockbox("delete", "NONEXISTENT")
 
 	if exitCode == 0 {
 		t.Errorf("Expected non-zero exit code for non-existent key, got 0")
@@ -235,15 +235,15 @@ func TestList(t *testing.T) {
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// Set multiple secrets
-	runLB("set", "SECRET1", "value1")
-	runLB("set", "SECRET2", "value2")
-	runLB("set", "SECRET3", "value3")
+	runLockbox("set", "SECRET1", "value1")
+	runLockbox("set", "SECRET2", "value2")
+	runLockbox("set", "SECRET3", "value3")
 
 	// List secrets
-	stdout, stderr, exitCode := runLB("list")
+	stdout, stderr, exitCode := runLockbox("list")
 	if exitCode != 0 {
 		t.Errorf("List failed with exit code %d. Stderr: %s", exitCode, stderr)
 	}
@@ -266,10 +266,10 @@ func TestListEmpty(t *testing.T) {
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// List with no secrets
-	stdout, _, exitCode := runLB("list")
+	stdout, _, exitCode := runLockbox("list")
 	if exitCode != 0 {
 		t.Errorf("List on empty store failed with exit code %d", exitCode)
 	}
@@ -279,20 +279,20 @@ func TestListEmpty(t *testing.T) {
 	}
 }
 
-// TestEnvExport tests `lb env` outputs correct format
+// TestEnvExport tests `lockbox env` outputs correct format
 func TestEnvExport(t *testing.T) {
 	_, cleanup := setupTest(t)
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// Set some secrets
-	runLB("set", "DB_HOST", "localhost")
-	runLB("set", "DB_PORT", "5432")
+	runLockbox("set", "DB_HOST", "localhost")
+	runLockbox("set", "DB_PORT", "5432")
 
 	// Export to env format
-	stdout, stderr, exitCode := runLB("env")
+	stdout, stderr, exitCode := runLockbox("env")
 	if exitCode != 0 {
 		t.Errorf("Env export failed with exit code %d. Stderr: %s", exitCode, stderr)
 	}
@@ -312,13 +312,13 @@ func TestEnvEscaping(t *testing.T) {
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// Set a secret with special characters
-	runLB("set", "COMPLEX_SECRET", `value"with"quotes$and`+"`backticks`")
+	runLockbox("set", "COMPLEX_SECRET", `value"with"quotes$and`+"`backticks`")
 
 	// Export to env format
-	stdout, _, exitCode := runLB("env")
+	stdout, _, exitCode := runLockbox("env")
 	if exitCode != 0 {
 		t.Fatalf("Env export failed with exit code %d", exitCode)
 	}
@@ -334,19 +334,19 @@ func TestEnvEscaping(t *testing.T) {
 	}
 }
 
-// TestRun tests `lb run -- command` passes env vars
+// TestRun tests `lockbox run -- command` passes env vars
 func TestRun(t *testing.T) {
 	_, cleanup := setupTest(t)
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// Set a secret
-	runLB("set", "TEST_VAR", "test_value")
+	runLockbox("set", "TEST_VAR", "test_value")
 
 	// Run a command that echoes the environment variable
-	stdout, stderr, exitCode := runLB("run", "--", "sh", "-c", "echo $TEST_VAR")
+	stdout, stderr, exitCode := runLockbox("run", "--", "sh", "-c", "echo $TEST_VAR")
 	if exitCode != 0 {
 		t.Errorf("Run failed with exit code %d. Stderr: %s", exitCode, stderr)
 	}
@@ -362,12 +362,12 @@ func TestServer(t *testing.T) {
 	defer cleanup()
 
 	// Initialize and set some secrets
-	runLB("init")
-	runLB("set", "API_KEY", "secret123")
-	runLB("set", "DB_URL", "postgres://localhost")
+	runLockbox("init")
+	runLockbox("set", "API_KEY", "secret123")
+	runLockbox("set", "DB_URL", "postgres://localhost")
 
 	// Start server in background
-	cmd := exec.Command("./lb", "serve", "-p", "9876")
+	cmd := exec.Command("./lockbox", "serve", "-p", "9876")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
@@ -431,17 +431,17 @@ func TestServer(t *testing.T) {
 	}
 }
 
-// TestRemoteEnv tests `lb env --remote` fetches from server
+// TestRemoteEnv tests `lockbox env --remote` fetches from server
 func TestRemoteEnv(t *testing.T) {
 	_, cleanup := setupTest(t)
 	defer cleanup()
 
 	// Initialize and set secrets
-	runLB("init")
-	runLB("set", "REMOTE_SECRET", "remote_value")
+	runLockbox("init")
+	runLockbox("set", "REMOTE_SECRET", "remote_value")
 
 	// Start server
-	cmd := exec.Command("./lb", "serve", "-p", "9877")
+	cmd := exec.Command("./lockbox", "serve", "-p", "9877")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestRemoteEnv(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Fetch env from remote
-	stdout, stderr, exitCode := runLB("env", "--remote", "127.0.0.1:9877")
+	stdout, stderr, exitCode := runLockbox("env", "--remote", "127.0.0.1:9877")
 	if exitCode != 0 {
 		t.Errorf("Remote env fetch failed with exit code %d. Stderr: %s", exitCode, stderr)
 	}
@@ -460,17 +460,17 @@ func TestRemoteEnv(t *testing.T) {
 	}
 }
 
-// TestRemoteRun tests `lb run --remote` works
+// TestRemoteRun tests `lockbox run --remote` works
 func TestRemoteRun(t *testing.T) {
 	_, cleanup := setupTest(t)
 	defer cleanup()
 
 	// Initialize and set secrets
-	runLB("init")
-	runLB("set", "RUN_VAR", "run_value")
+	runLockbox("init")
+	runLockbox("set", "RUN_VAR", "run_value")
 
 	// Start server
-	cmd := exec.Command("./lb", "serve", "-p", "9878")
+	cmd := exec.Command("./lockbox", "serve", "-p", "9878")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestRemoteRun(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Run command with remote secrets
-	stdout, stderr, exitCode := runLB("run", "--remote", "127.0.0.1:9878", "--", "sh", "-c", "echo $RUN_VAR")
+	stdout, stderr, exitCode := runLockbox("run", "--remote", "127.0.0.1:9878", "--", "sh", "-c", "echo $RUN_VAR")
 	if exitCode != 0 {
 		t.Errorf("Remote run failed with exit code %d. Stderr: %s", exitCode, stderr)
 	}
@@ -495,7 +495,7 @@ func TestNoInitError(t *testing.T) {
 	defer cleanup()
 
 	// Don't run init - should fail
-	_, stderr, exitCode := runLB("set", "KEY", "value")
+	_, stderr, exitCode := runLockbox("set", "KEY", "value")
 
 	if exitCode == 0 {
 		t.Errorf("Expected non-zero exit code when not initialized, got 0")
@@ -512,13 +512,13 @@ func TestMultipleSecrets(t *testing.T) {
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// Set many secrets
 	for i := 0; i < 10; i++ {
 		key := fmt.Sprintf("SECRET_%d", i)
 		value := fmt.Sprintf("value_%d", i)
-		runLB("set", key, value)
+		runLockbox("set", key, value)
 	}
 
 	// Verify all can be retrieved
@@ -526,7 +526,7 @@ func TestMultipleSecrets(t *testing.T) {
 		key := fmt.Sprintf("SECRET_%d", i)
 		expected := fmt.Sprintf("value_%d", i)
 
-		stdout, _, exitCode := runLB("get", key)
+		stdout, _, exitCode := runLockbox("get", key)
 		if exitCode != 0 {
 			t.Errorf("Failed to get %s", key)
 		}
@@ -537,7 +537,7 @@ func TestMultipleSecrets(t *testing.T) {
 	}
 
 	// Verify list shows all
-	stdout, _, _ := runLB("list")
+	stdout, _, _ := runLockbox("list")
 	for i := 0; i < 10; i++ {
 		key := fmt.Sprintf("SECRET_%d", i)
 		if !strings.Contains(stdout, key) {
@@ -552,15 +552,15 @@ func TestLargeValue(t *testing.T) {
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// Create a large value (10KB)
 	largeValue := strings.Repeat("A", 10240)
 
 	// Set and retrieve
-	runLB("set", "LARGE_SECRET", largeValue)
+	runLockbox("set", "LARGE_SECRET", largeValue)
 
-	stdout, _, exitCode := runLB("get", "LARGE_SECRET")
+	stdout, _, exitCode := runLockbox("get", "LARGE_SECRET")
 	if exitCode != 0 {
 		t.Fatalf("Failed to get large secret")
 	}
@@ -576,7 +576,7 @@ func TestSpecialCharactersInKeys(t *testing.T) {
 	defer cleanup()
 
 	// Initialize
-	runLB("init")
+	runLockbox("init")
 
 	// Set secrets with various characters
 	keys := []string{
@@ -588,9 +588,9 @@ func TestSpecialCharactersInKeys(t *testing.T) {
 
 	for _, key := range keys {
 		value := fmt.Sprintf("value_for_%s", key)
-		runLB("set", key, value)
+		runLockbox("set", key, value)
 
-		stdout, _, exitCode := runLB("get", key)
+		stdout, _, exitCode := runLockbox("get", key)
 		if exitCode != 0 {
 			t.Errorf("Failed to get key %s", key)
 		}

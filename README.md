@@ -70,133 +70,133 @@ sudo mv lockbox-linux-amd64 /usr/local/bin/lockbox
 Initialize Lockbox (creates encrypted database):
 
 ```bash
-lb init
+lockbox init
 ```
 
 Store a secret:
 
 ```bash
-lb set API_KEY "sk-1234567890abcdef"
-lb set DATABASE_URL "postgresql://user:pass@localhost/db"
+lockbox set API_KEY "sk-1234567890abcdef"
+lockbox set DATABASE_URL "postgresql://user:pass@localhost/db"
 ```
 
 Load secrets and run a command:
 
 ```bash
-lb run -- node server.js
+lockbox run -- node server.js
 # Secrets are injected into environment variables
 ```
 
 List all secret keys:
 
 ```bash
-lb list
+lockbox list
 ```
 
 Retrieve a secret:
 
 ```bash
-lb get API_KEY
+lockbox get API_KEY
 ```
 
 Export all secrets to shell environment:
 
 ```bash
-eval $(lb env)
+eval $(lockbox env)
 echo $API_KEY  # sk-1234567890abcdef
 ```
 
 ## Commands
 
-### `lb init`
+### `lockbox init`
 
 Initialize Lockbox and create the encrypted database.
 
 ```bash
-lb init
+lockbox init
 # Creates ~/.lockbox/lockbox.db
 ```
 
-### `lb set KEY VALUE`
+### `lockbox set KEY VALUE`
 
 Store a secret. Values are encrypted before storage.
 
 ```bash
-lb set API_KEY "sk-xxxxx"
-lb set DATABASE_URL "postgres://user:pass@localhost/mydb"
-lb set WEBHOOK_SECRET "whsec_1234567890abcdef"
+lockbox set API_KEY "sk-xxxxx"
+lockbox set DATABASE_URL "postgres://user:pass@localhost/mydb"
+lockbox set WEBHOOK_SECRET "whsec_1234567890abcdef"
 ```
 
-### `lb get KEY`
+### `lockbox get KEY`
 
 Retrieve and decrypt a secret. Prints the value to stdout.
 
 ```bash
-lb get API_KEY
+lockbox get API_KEY
 # Output: sk-xxxxx
 ```
 
-### `lb delete KEY`
+### `lockbox delete KEY`
 
 Delete a secret from the database.
 
 ```bash
-lb delete OLD_SECRET
+lockbox delete OLD_SECRET
 # Removed: OLD_SECRET
 ```
 
-### `lb list`
+### `lockbox list`
 
 List all secret keys (not values). Useful for auditing what's stored.
 
 ```bash
-lb list
+lockbox list
 # Keys:
 # - API_KEY
 # - DATABASE_URL
 # - WEBHOOK_SECRET
 ```
 
-### `lb env [--remote URL]`
+### `lockbox env [--remote URL]`
 
 Export all secrets as shell-compatible environment variable assignments.
 
 ```bash
-lb env
+lockbox env
 # export API_KEY='sk-xxxxx'
 # export DATABASE_URL='postgres://...'
 
-eval $(lb env)  # Load into current shell
+eval $(lockbox env)  # Load into current shell
 ```
 
 With `--remote` flag, fetch from a remote Lockbox server:
 
 ```bash
-lb env --remote http://lockbox-server:8080
+lockbox env --remote http://lockbox-server:8080
 ```
 
-### `lb run -- COMMAND [ARGS...]`
+### `lockbox run -- COMMAND [ARGS...]`
 
 Execute a command with secrets injected into its environment.
 
 ```bash
-lb run -- node server.js
-lb run -- python script.py --verbose
-lb run -- npm test
+lockbox run -- node server.js
+lockbox run -- python script.py --verbose
+lockbox run -- npm test
 
 # With --remote flag for server mode
-lb run --remote http://lockbox-server:8080 -- bash deploy.sh
+lockbox run --remote http://lockbox-server:8080 -- bash deploy.sh
 ```
 
-### `lb serve [--port PORT]`
+### `lockbox serve [--port PORT]`
 
 Start an HTTP server for remote secret access. Server binds to `localhost` only.
 
 ```bash
-lb serve
+lockbox serve
 # Server listening on http://127.0.0.1:8100
 
-lb serve --port 9000
+lockbox serve --port 9000
 # Server listening on http://127.0.0.1:9000
 ```
 
@@ -207,7 +207,7 @@ Lockbox can run as an HTTP server, allowing multiple machines or processes to ac
 ### Starting a Server
 
 ```bash
-lb serve --port 8100
+lockbox serve --port 8100
 # Server listening on http://127.0.0.1:8100
 ```
 
@@ -256,10 +256,10 @@ Point client commands to a remote server:
 
 ```bash
 # Run command with remote secrets
-lb run --remote localhost:8100 -- npm test
+lockbox run --remote localhost:8100 -- npm test
 
 # Load remote secrets into shell
-eval $(lb env --remote localhost:8100)
+eval $(lockbox env --remote localhost:8100)
 ```
 
 ## Security Model
@@ -296,9 +296,9 @@ eval $(lb env --remote localhost:8100)
 2. **Use SSH tunnels for remote access** - Don't expose the server directly:
    ```bash
    ssh -L 8100:localhost:8100 user@remote-server
-   lb env --remote localhost:8100
+   lockbox env --remote localhost:8100
    ```
-3. **Don't log secrets** - Avoid piping `lb get` output through shell history
+3. **Don't log secrets** - Avoid piping `lockbox get` output through shell history
 4. **Rotate regularly** - Change sensitive secrets periodically
 
 ## Storage
@@ -338,16 +338,16 @@ A: Lockbox is designed for development and automation secrets. For production (e
 
 **Q: Can multiple users share the same Lockbox database?**
 
-A: Yes, via server mode. Run `lb serve` on a shared machine and connect via SSH tunnel.
+A: Yes, via server mode. Run `lockbox serve` on a shared machine and connect via SSH tunnel.
 
 **Q: How do I migrate from .env files?**
 
 A: Simple script:
 
 ```bash
-lb init
+lockbox init
 while IFS='=' read -r key value; do
-  [[ -n "$key" && ! "$key" =~ ^# ]] && lb set "$key" "$value"
+  [[ -n "$key" && ! "$key" =~ ^# ]] && lockbox set "$key" "$value"
 done < .env
 rm .env  # Delete the plain-text file
 ```
