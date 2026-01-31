@@ -37,7 +37,7 @@ Perfect for:
 ### Via `go install` (Recommended)
 
 ```bash
-go install github.com/your-username/lb@latest
+go install github.com/MQ37/lockbox@latest
 ```
 
 Ensure your `$GOPATH/bin` is in your `PATH`:
@@ -48,18 +48,18 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 
 ### Manual Installation
 
-Download the latest binary from [Releases](https://github.com/your-username/lb/releases):
+Download the latest binary from [Releases](https://github.com/MQ37/lockbox/releases):
 
 ```bash
 # macOS
-wget https://github.com/your-username/lb/releases/download/v1.0.0/lb-darwin-arm64
-chmod +x lb-darwin-arm64
-sudo mv lb-darwin-arm64 /usr/local/bin/lb
+wget https://github.com/MQ37/lockbox/releases/download/v1.0.0/lockbox-darwin-arm64
+chmod +x lockbox-darwin-arm64
+sudo mv lockbox-darwin-arm64 /usr/local/bin/lockbox
 
 # Linux
-wget https://github.com/your-username/lb/releases/download/v1.0.0/lb-linux-amd64
-chmod +x lb-linux-amd64
-sudo mv lb-linux-amd64 /usr/local/bin/lb
+wget https://github.com/MQ37/lockbox/releases/download/v1.0.0/lockbox-linux-amd64
+chmod +x lockbox-linux-amd64
+sudo mv lockbox-linux-amd64 /usr/local/bin/lockbox
 
 # Windows (PowerShell)
 # Download .exe from releases and add to PATH
@@ -354,7 +354,7 @@ rm .env  # Delete the plain-text file
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or pull request on [GitHub](https://github.com/your-username/lb).
+Contributions are welcome! Please open an issue or pull request on [GitHub](https://github.com/MQ37/lockbox).
 
 ## License
 
