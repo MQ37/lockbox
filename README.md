@@ -5,6 +5,8 @@ A secure secret management CLI for developers and AI agents. Encrypt secrets ins
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-blue.svg)](https://golang.org/)
 
+> **⚠️ Disclaimer:** Lockbox does not provide true cryptographic security for your secrets. The secrets are encrypted but the encryption key is stored alongside the data. The primary goal is to make secrets **harder to read by AI agents and automated tools**, preventing accidental exposure through casual file reads. This is security through obscurity, not a replacement for proper secret management solutions.
+
 ## Why Lockbox?
 
 ### The Problem with .env Files
