@@ -2,6 +2,8 @@
 
 A secure secret management CLI for developers and AI agents. Encrypt secrets instead of leaving them in plain-text .env files.
 
+> **🤖 AI Agents:** Run `lockbox learn` for usage instructions tailored to your environment.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-blue.svg)](https://golang.org/)
 
