@@ -567,8 +567,82 @@ Endpoints:
 	// Add --remote flag to env command
 	envCmd.Flags().StringP("remote", "r", "", "Remote server to fetch from (e.g., localhost:8100)")
 
+	// learn command - Print instructions for AI agents
+	learnCmd := &cobra.Command{
+		Use:   "learn",
+		Short: "Print instructions for AI agents on how to use lockbox",
+		Long:  `Outputs documentation and usage instructions for AI agents to learn how to use lockbox for secret management.`,
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Print(`# Lockbox - Secret Management for AI Agents
+
+## Overview
+Lockbox is a secure secret management CLI. Secrets are stored encrypted and can be accessed via CLI commands or a remote server.
+
+## Your Environment
+You are running inside an isolated container. The host system runs a lockbox server that you can connect to for accessing secrets. You do NOT have direct access to the lockbox database - you must use the remote server.
+
+## Connecting to Remote Server
+The lockbox server runs on the host. Use the --remote flag to connect:
+
+` + "```" + `bash
+# Check what secrets are available
+lockbox list --remote host.containers.internal:8100
+
+# Get a specific secret value
+lockbox get SECRET_NAME --remote host.containers.internal:8100
+
+# Export all secrets as environment variables
+eval $(lockbox env --remote host.containers.internal:8100)
+
+# Run a command with all secrets injected
+lockbox run --remote host.containers.internal:8100 -- your-command-here
+` + "```" + `
+
+## Common Use Cases
+
+### 1. Check Available Secrets
+` + "```" + `bash
+lockbox list --remote host.containers.internal:8100
+` + "```" + `
+This shows all secret keys (not values) stored in lockbox.
+
+### 2. Get a Single Secret
+` + "```" + `bash
+API_KEY=$(lockbox get OPENAI_API_KEY --remote host.containers.internal:8100)
+echo "Got API key: ${API_KEY:0:10}..."
+` + "```" + `
+
+### 3. Run Command with Secrets
+` + "```" + `bash
+# All secrets become environment variables for the command
+lockbox run --remote host.containers.internal:8100 -- npm test
+lockbox run --remote host.containers.internal:8100 -- python script.py
+` + "```" + `
+
+### 4. Load Secrets into Current Shell
+` + "```" + `bash
+eval $(lockbox env --remote host.containers.internal:8100)
+# Now all secrets are available as $SECRET_NAME
+` + "```" + `
+
+## Important Notes
+- Always use --remote host.containers.internal:8100 to connect to the host's lockbox server
+- Never store secrets in plain text files
+- Secret values are sensitive - avoid logging or echoing them
+- If lockbox server is not running, ask the user to start it with: lockbox serve
+
+## Error Handling
+If you get connection errors:
+1. The lockbox server may not be running on the host
+2. Ask the user to run: lockbox serve --port 8100
+3. Verify connectivity: curl http://host.containers.internal:8100/health
+`)
+		},
+	}
+
 	// Add commands to root
-	rootCmd.AddCommand(initCmd, setCmd, getCmd, deleteCmd, listCmd, envCmd, runCmd, serveCmd)
+	rootCmd.AddCommand(initCmd, setCmd, getCmd, deleteCmd, listCmd, envCmd, runCmd, serveCmd, learnCmd)
 
 	// Execute
 	if err := rootCmd.Execute(); err != nil {
