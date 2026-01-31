@@ -1,0 +1,15 @@
+# Binary
+lb
+
+# Test files
+*.test
+test_*.sh
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
