@@ -87,8 +87,11 @@ lockbox set DATABASE_URL "postgresql://user:pass@localhost/db"
 Load secrets and run a command:
 
 ```bash
+lockbox run -c 'echo $API_KEY'
+# Shell mode: secrets are expanded as $VAR references
+
 lockbox run -- node server.js
-# Secrets are injected into environment variables
+# Direct mode: secrets are injected into environment variables
 ```
 
 List all secret keys:
@@ -179,18 +182,34 @@ With `--remote` flag, fetch from a remote Lockbox server:
 lockbox env --remote http://lockbox-server:8080
 ```
 
-### `lockbox run -- COMMAND [ARGS...]`
+### `lockbox run [-c script | -- command [args...]]`
 
-Execute a command with secrets injected into its environment.
+Execute a command with secrets injected into its environment. Supports two modes:
+
+**Shell mode (`-c`)** — runs the script via `sh -c`, so `$VAR` expansion works:
+
+```bash
+lockbox run -c 'echo $API_KEY'
+lockbox run -c 'curl -H "Authorization: Bearer $API_KEY" https://api.example.com'
+lockbox run -c 'mongosh "$DATABASE_URL"'
+```
+
+**Direct mode (`--`)** — runs the command directly without a shell:
 
 ```bash
 lockbox run -- node server.js
 lockbox run -- python script.py --verbose
 lockbox run -- npm test
+```
 
-# With --remote flag for server mode
+With `--remote` flag for server mode:
+
+```bash
+lockbox run --remote http://lockbox-server:8080 -c 'echo $SECRET_VAR'
 lockbox run --remote http://lockbox-server:8080 -- bash deploy.sh
 ```
+
+> **Note:** The `-c` and `--` modes are mutually exclusive — you cannot use both at the same time.
 
 ### `lockbox serve [--port PORT]`
 
@@ -259,7 +278,10 @@ curl http://localhost:8100/env
 Point client commands to a remote server:
 
 ```bash
-# Run command with remote secrets
+# Run command with remote secrets (shell mode)
+lockbox run --remote localhost:8100 -c 'echo $API_KEY'
+
+# Run command with remote secrets (direct mode)
 lockbox run --remote localhost:8100 -- npm test
 
 # Load remote secrets into shell
