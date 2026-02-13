@@ -321,17 +321,22 @@ Can be used with eval or source to set environment variables:
 
 	// run command - Run a command with secrets in environment
 	runCmd := &cobra.Command{
-		Use:   "run -- command [args...]",
+		Use:   "run [-c script | -- command [args...]]",
 		Short: "Run a command with secrets in environment",
 		Long: `Execute a command with all stored secrets set as environment variables.
-Usage:
-  lockbox run -- sh -c 'echo $SECRET_VAR'
-  lockbox run -- env | grep SECRET
-  lockbox run -- ./my-app`,
+
+Shell mode (-c): runs the script via sh -c, so variable expansion works:
+  lockbox run -c 'echo $SECRET_VAR'
+  lockbox run -c 'curl -H "Authorization: Bearer $API_KEY" https://api.example.com'
+
+Direct mode (--): runs the command directly without a shell:
+  lockbox run -- ./my-app
+  lockbox run -- env`,
 		TraverseChildren: true,
 		Run: func(cmd *cobra.Command, args []string) {
 			// Check for remote flag
 			remoteFlag, _ := cmd.Flags().GetString("remote")
+			shellScript, _ := cmd.Flags().GetString("cmd")
 
 			var secrets map[string]string
 			var err error
@@ -383,15 +388,26 @@ Usage:
 				env = append(env, fmt.Sprintf("%s=%s", key, value))
 			}
 
-			// Need at least one argument for the command
-			if len(args) == 0 {
-				fmt.Fprintf(os.Stderr, "Error: no command provided\n")
-				fmt.Fprintf(os.Stderr, "Usage: lockbox run -- command [args...]\n")
-				os.Exit(1)
+			var execCmd *exec.Cmd
+
+			if shellScript != "" {
+				// Shell mode: run via sh -c so env vars get expanded
+				if len(args) > 0 {
+					fmt.Fprintf(os.Stderr, "Error: cannot use -c flag together with -- command\n")
+					os.Exit(1)
+				}
+				execCmd = exec.Command("sh", "-c", shellScript)
+			} else {
+				// Direct mode: run command directly
+				if len(args) == 0 {
+					fmt.Fprintf(os.Stderr, "Error: no command provided\n")
+					fmt.Fprintf(os.Stderr, "Usage: lockbox run -c 'echo $SECRET_VAR'\n")
+					fmt.Fprintf(os.Stderr, "   or: lockbox run -- command [args...]\n")
+					os.Exit(1)
+				}
+				execCmd = exec.Command(args[0], args[1:]...)
 			}
 
-			// Execute the command
-			execCmd := exec.Command(args[0], args[1:]...)
 			execCmd.Env = env
 			execCmd.Stdin = os.Stdin
 			execCmd.Stdout = os.Stdout
@@ -409,8 +425,9 @@ Usage:
 		},
 	}
 
-	// Add --remote flag to run command
+	// Add flags to run command
 	runCmd.Flags().StringP("remote", "r", "", "Remote server to fetch secrets from (e.g., localhost:8100)")
+	runCmd.Flags().StringP("cmd", "c", "", "Shell script to execute (runs via sh -c, enabling $VAR expansion)")
 
 	// serve command - Start HTTP server
 	serveCmd := &cobra.Command{
