@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/MQ37/lockbox/internal/crypto"
@@ -39,54 +38,12 @@ func getStoreAndKey() (*db.Store, []byte, error) {
 	return store, key, nil
 }
 
-// fetchRemoteSecrets fetches secrets from a remote server
-func fetchRemoteSecrets(remote string) (map[string]string, error) {
-	url := fmt.Sprintf("http://%s/secrets", remote)
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch secrets from remote: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("remote server returned status %d: %s", resp.StatusCode, body)
-	}
-
-	var keys []string
-	if err := json.NewDecoder(resp.Body).Decode(&keys); err != nil {
-		return nil, fmt.Errorf("failed to decode remote response: %w", err)
-	}
-
-	secrets := make(map[string]string)
-	for _, key := range keys {
-		valueURL := fmt.Sprintf("http://%s/secrets/%s", remote, key)
-		valueResp, err := http.Get(valueURL)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch secret '%s' from remote: %w", key, err)
-		}
-		defer valueResp.Body.Close()
-
-		if valueResp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(valueResp.Body)
-			return nil, fmt.Errorf("remote server returned status %d for '%s': %s", valueResp.StatusCode, key, body)
-		}
-
-		value, err := io.ReadAll(valueResp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read secret '%s' from remote: %w", key, err)
-		}
-		secrets[key] = string(value)
-	}
-
-	return secrets, nil
-}
-
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "lockbox",
-		Short: "Lockbox - A secure secret management CLI",
-		Long:  `Lockbox is a command-line tool for securely storing and managing secrets.`,
+		Use:     "lockbox",
+		Short:   "Lockbox - A secure secret management CLI",
+		Long:    `Lockbox is a command-line tool for securely storing and managing secrets.`,
+		Version: version,
 	}
 
 	// init command
@@ -132,39 +89,7 @@ func main() {
 		},
 	}
 
-	// set command
-	setCmd := &cobra.Command{
-		Use:   "set KEY VALUE",
-		Short: "Set a secret",
-		Long:  `Store a secret with the given key and value.`,
-		Args:  cobra.ExactArgs(2),
-		Run: func(cmd *cobra.Command, args []string) {
-			key := args[0]
-			value := args[1]
-
-			store, encKey, err := getStoreAndKey()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			defer store.Close()
-
-			// Encrypt the value
-			encrypted, err := crypto.Encrypt([]byte(value), encKey)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to encrypt value: %v\n", err)
-				os.Exit(1)
-			}
-
-			// Store the encrypted value
-			if err := store.SetSecret(key, encrypted); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to store secret: %v\n", err)
-				os.Exit(1)
-			}
-
-			fmt.Printf("✓ Secret '%s' set successfully\n", key)
-		},
-	}
+	setCmd := newSetCmd()
 
 	// get command
 	getCmd := &cobra.Command{
@@ -235,36 +160,7 @@ func main() {
 		},
 	}
 
-	// list command
-	listCmd := &cobra.Command{
-		Use:   "list",
-		Short: "List all secrets",
-		Long:  `Display all stored secret keys.`,
-		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			store, _, err := getStoreAndKey()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			defer store.Close()
-
-			// Get all secrets
-			keys, err := store.ListSecrets()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to list secrets: %v\n", err)
-				os.Exit(1)
-			}
-
-			if len(keys) == 0 {
-				fmt.Println("No secrets found")
-				return
-			}
-
-			// Print each key on its own line
-			fmt.Println(strings.Join(keys, "\n"))
-		},
-	}
+	listCmd := newListCmd()
 
 	// env command - Export secrets as environment variables
 	envCmd := &cobra.Command{
@@ -319,115 +215,7 @@ Can be used with eval or source to set environment variables:
 		},
 	}
 
-	// run command - Run a command with secrets in environment
-	runCmd := &cobra.Command{
-		Use:   "run [-c script | -- command [args...]]",
-		Short: "Run a command with secrets in environment",
-		Long: `Execute a command with all stored secrets set as environment variables.
-
-Shell mode (-c): runs the script via sh -c, so variable expansion works:
-  lockbox run -c 'echo $SECRET_VAR'
-  lockbox run -c 'curl -H "Authorization: Bearer $API_KEY" https://api.example.com'
-
-Direct mode (--): runs the command directly without a shell:
-  lockbox run -- ./my-app
-  lockbox run -- env`,
-		TraverseChildren: true,
-		Run: func(cmd *cobra.Command, args []string) {
-			// Check for remote flag
-			remoteFlag, _ := cmd.Flags().GetString("remote")
-			shellScript, _ := cmd.Flags().GetString("cmd")
-
-			var secrets map[string]string
-			var err error
-
-			if remoteFlag != "" {
-				// Fetch secrets from remote server
-				secrets, err = fetchRemoteSecrets(remoteFlag)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-			} else {
-				// Get all secrets from local store
-				store, encKey, err := getStoreAndKey()
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-				defer store.Close()
-
-				keys, err := store.ListSecrets()
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: failed to list secrets: %v\n", err)
-					os.Exit(1)
-				}
-
-				secrets = make(map[string]string)
-				for _, key := range keys {
-					encrypted, err := store.GetSecret(key)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error: failed to get secret '%s': %v\n", key, err)
-						os.Exit(1)
-					}
-
-					// Decrypt the value
-					decrypted, err := crypto.Decrypt(encrypted, encKey)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error: failed to decrypt secret '%s': %v\n", key, err)
-						os.Exit(1)
-					}
-
-					secrets[key] = string(decrypted)
-				}
-			}
-
-			// Build environment with secrets
-			env := os.Environ()
-			for key, value := range secrets {
-				env = append(env, fmt.Sprintf("%s=%s", key, value))
-			}
-
-			var execCmd *exec.Cmd
-
-			if shellScript != "" {
-				// Shell mode: run via sh -c so env vars get expanded
-				if len(args) > 0 {
-					fmt.Fprintf(os.Stderr, "Error: cannot use -c flag together with -- command\n")
-					os.Exit(1)
-				}
-				execCmd = exec.Command("sh", "-c", shellScript)
-			} else {
-				// Direct mode: run command directly
-				if len(args) == 0 {
-					fmt.Fprintf(os.Stderr, "Error: no command provided\n")
-					fmt.Fprintf(os.Stderr, "Usage: lockbox run -c 'echo $SECRET_VAR'\n")
-					fmt.Fprintf(os.Stderr, "   or: lockbox run -- command [args...]\n")
-					os.Exit(1)
-				}
-				execCmd = exec.Command(args[0], args[1:]...)
-			}
-
-			execCmd.Env = env
-			execCmd.Stdin = os.Stdin
-			execCmd.Stdout = os.Stdout
-			execCmd.Stderr = os.Stderr
-
-			err = execCmd.Run()
-			if err != nil {
-				// Check if it's an exit error to get the exit code
-				if exitErr, ok := err.(*exec.ExitError); ok {
-					os.Exit(exitErr.ExitCode())
-				}
-				fmt.Fprintf(os.Stderr, "Error: failed to execute command: %v\n", err)
-				os.Exit(1)
-			}
-		},
-	}
-
-	// Add flags to run command
-	runCmd.Flags().StringP("remote", "r", "", "Remote server to fetch secrets from (e.g., localhost:8100)")
-	runCmd.Flags().StringP("cmd", "c", "", "Shell script to execute (runs via sh -c, enabling $VAR expansion)")
+	runCmd := newRunCmd()
 
 	// serve command - Start HTTP server
 	serveCmd := &cobra.Command{
@@ -584,82 +372,11 @@ Endpoints:
 	// Add --remote flag to env command
 	envCmd.Flags().StringP("remote", "r", "", "Remote server to fetch from (e.g., localhost:8100)")
 
-	// learn command - Print instructions for AI agents
-	learnCmd := &cobra.Command{
-		Use:   "learn",
-		Short: "Print instructions for AI agents on how to use lockbox",
-		Long:  `Outputs documentation and usage instructions for AI agents to learn how to use lockbox for secret management.`,
-		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Print(`# Lockbox - Secret Management for AI Agents
-
-## Overview
-Lockbox is a secure secret management CLI. Secrets are stored encrypted and can be accessed via CLI commands or a remote server.
-
-## Your Environment
-You are running inside an isolated container. The host system runs a lockbox server that you can connect to for accessing secrets. You do NOT have direct access to the lockbox database - you must use the remote server.
-
-## Connecting to Remote Server
-The lockbox server runs on the host. Use the --remote flag to connect:
-
-` + "```" + `bash
-# Check what secrets are available
-lockbox list --remote host.containers.internal:8100
-
-# Get a specific secret value
-lockbox get SECRET_NAME --remote host.containers.internal:8100
-
-# Export all secrets as environment variables
-eval $(lockbox env --remote host.containers.internal:8100)
-
-# Run a command with all secrets injected
-lockbox run --remote host.containers.internal:8100 -- your-command-here
-` + "```" + `
-
-## Common Use Cases
-
-### 1. Check Available Secrets
-` + "```" + `bash
-lockbox list --remote host.containers.internal:8100
-` + "```" + `
-This shows all secret keys (not values) stored in lockbox.
-
-### 2. Get a Single Secret
-` + "```" + `bash
-API_KEY=$(lockbox get OPENAI_API_KEY --remote host.containers.internal:8100)
-echo "Got API key: ${API_KEY:0:10}..."
-` + "```" + `
-
-### 3. Run Command with Secrets
-` + "```" + `bash
-# All secrets become environment variables for the command
-lockbox run --remote host.containers.internal:8100 -- npm test
-lockbox run --remote host.containers.internal:8100 -- python script.py
-` + "```" + `
-
-### 4. Load Secrets into Current Shell
-` + "```" + `bash
-eval $(lockbox env --remote host.containers.internal:8100)
-# Now all secrets are available as $SECRET_NAME
-` + "```" + `
-
-## Important Notes
-- Always use --remote host.containers.internal:8100 to connect to the host's lockbox server
-- Never store secrets in plain text files
-- Secret values are sensitive - avoid logging or echoing them
-- If lockbox server is not running, ask the user to start it with: lockbox serve
-
-## Error Handling
-If you get connection errors:
-1. The lockbox server may not be running on the host
-2. Ask the user to run: lockbox serve --port 8100
-3. Verify connectivity: curl http://host.containers.internal:8100/health
-`)
-		},
-	}
+	learnCmd := newLearnCmd()
 
 	// Add commands to root
-	rootCmd.AddCommand(initCmd, setCmd, getCmd, deleteCmd, listCmd, envCmd, runCmd, serveCmd, learnCmd)
+	rootCmd.AddCommand(initCmd, setCmd, getCmd, deleteCmd, listCmd, envCmd, runCmd, serveCmd, learnCmd,
+		newHasCmd(), newCheckCmd(), newProfileCmd(), newHistoryCmd(), newRollbackCmd())
 
 	// Execute
 	if err := rootCmd.Execute(); err != nil {

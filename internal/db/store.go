@@ -58,6 +58,9 @@ func NewStore() (*Store, error) {
 
 	store := &Store{db: db}
 
+	// The database holds the encryption key next to the data: keep it private.
+	_ = os.Chmod(dbPath, 0600)
+
 	// Run migrations
 	if err := store.migrate(); err != nil {
 		db.Close()
@@ -81,6 +84,14 @@ func (s *Store) migrate() error {
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS secret_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		key TEXT NOT NULL,
+		value BLOB NOT NULL,
+		replaced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS secret_history_key ON secret_history (key, id);
 	`
 
 	_, err := s.db.Exec(schema)
@@ -124,17 +135,144 @@ func (s *Store) SetConfig(key string, value []byte) error {
 	return nil
 }
 
-// SetSecret stores an encrypted secret value
+// HistoryLimit is how many previous values are kept per key.
+const HistoryLimit = 5
+
+// SetSecret stores an encrypted secret value. A different previous value is
+// kept in the history (last HistoryLimit entries) so it can be rolled back.
 func (s *Store) SetSecret(key string, encryptedValue []byte) error {
-	_, err := s.db.Exec(
-		`INSERT OR REPLACE INTO secrets (key, value, created_at, updated_at)
-		 VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-		key, encryptedValue,
-	)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to set secret: %w", err)
 	}
-	return nil
+	defer tx.Rollback()
+	var createdAt string
+	var prev []byte
+	err = tx.QueryRow("SELECT value, created_at FROM secrets WHERE key = ?", key).Scan(&prev, &createdAt)
+	exists := err == nil
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("failed to set secret: %w", err)
+	}
+	if exists {
+		if _, err := tx.Exec("INSERT INTO secret_history (key, value) VALUES (?, ?)", key, prev); err != nil {
+			return fmt.Errorf("failed to keep history: %w", err)
+		}
+		if _, err := tx.Exec(`DELETE FROM secret_history WHERE key = ? AND id NOT IN
+			(SELECT id FROM secret_history WHERE key = ? ORDER BY id DESC LIMIT ?)`, key, key, HistoryLimit); err != nil {
+			return fmt.Errorf("failed to trim history: %w", err)
+		}
+		_, err = tx.Exec("UPDATE secrets SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?", encryptedValue, key)
+	} else {
+		_, err = tx.Exec("INSERT INTO secrets (key, value) VALUES (?, ?)", key, encryptedValue)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to set secret: %w", err)
+	}
+	return tx.Commit()
+}
+
+// HasSecret reports whether a key exists.
+func (s *Store) HasSecret(key string) (bool, error) {
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM secrets WHERE key = ?", key).Scan(&n); err != nil {
+		return false, fmt.Errorf("failed to look up secret: %w", err)
+	}
+	return n > 0, nil
+}
+
+// SecretMeta is the non-secret information about a stored key.
+type SecretMeta struct {
+	Key       string `json:"key"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// SecretInfo returns timestamps for a key.
+func (s *Store) SecretInfo(key string) (SecretMeta, error) {
+	m := SecretMeta{Key: key}
+	err := s.db.QueryRow("SELECT created_at, updated_at FROM secrets WHERE key = ?", key).Scan(&m.CreatedAt, &m.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return m, ErrNotFound
+	}
+	return m, err
+}
+
+// ListSecretMeta returns all keys with their timestamps.
+func (s *Store) ListSecretMeta() ([]SecretMeta, error) {
+	rows, err := s.db.Query("SELECT key, created_at, updated_at FROM secrets ORDER BY key ASC")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list secrets: %w", err)
+	}
+	defer rows.Close()
+	var out []SecretMeta
+	for rows.Next() {
+		var m SecretMeta
+		if err := rows.Scan(&m.Key, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// HistoryEntry is one previous value of a key (value stays encrypted).
+type HistoryEntry struct {
+	ID         int64
+	ReplacedAt string
+}
+
+// History lists the kept previous values of a key, newest first.
+func (s *Store) History(key string) ([]HistoryEntry, error) {
+	rows, err := s.db.Query("SELECT id, replaced_at FROM secret_history WHERE key = ? ORDER BY id DESC", key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read history: %w", err)
+	}
+	defer rows.Close()
+	var out []HistoryEntry
+	for rows.Next() {
+		var h HistoryEntry
+		if err := rows.Scan(&h.ID, &h.ReplacedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// Rollback restores the newest previous value of a key. The value it replaces
+// (if the key still exists) goes into the history, so rollback is undoable.
+func (s *Store) Rollback(key string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var id int64
+	var prev []byte
+	err = tx.QueryRow("SELECT id, value FROM secret_history WHERE key = ? ORDER BY id DESC LIMIT 1", key).Scan(&id, &prev)
+	if err == sql.ErrNoRows {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM secret_history WHERE id = ?", id); err != nil {
+		return err
+	}
+	var cur []byte
+	err = tx.QueryRow("SELECT value FROM secrets WHERE key = ?", key).Scan(&cur)
+	if err == nil {
+		if _, err := tx.Exec("INSERT INTO secret_history (key, value) VALUES (?, ?)", key, cur); err != nil {
+			return err
+		}
+		_, err = tx.Exec("UPDATE secrets SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?", prev, key)
+	} else if err == sql.ErrNoRows {
+		_, err = tx.Exec("INSERT INTO secrets (key, value) VALUES (?, ?)", key, prev)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetSecret retrieves an encrypted secret value by key
@@ -150,23 +288,33 @@ func (s *Store) GetSecret(key string) ([]byte, error) {
 	return value, nil
 }
 
-// DeleteSecret removes a secret by key
+// DeleteSecret removes a secret by key. Its value moves into the history so a
+// mistaken delete can be undone with Rollback.
 func (s *Store) DeleteSecret(key string) error {
-	result, err := s.db.Exec("DELETE FROM secrets WHERE key = ?", key)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to delete secret: %w", err)
 	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-
-	if rowsAffected == 0 {
+	defer tx.Rollback()
+	var prev []byte
+	err = tx.QueryRow("SELECT value FROM secrets WHERE key = ?", key).Scan(&prev)
+	if err == sql.ErrNoRows {
 		return ErrNotFound
 	}
-
-	return nil
+	if err != nil {
+		return fmt.Errorf("failed to delete secret: %w", err)
+	}
+	if _, err := tx.Exec("INSERT INTO secret_history (key, value) VALUES (?, ?)", key, prev); err != nil {
+		return fmt.Errorf("failed to keep history: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM secret_history WHERE key = ? AND id NOT IN
+		(SELECT id FROM secret_history WHERE key = ? ORDER BY id DESC LIMIT ?)`, key, key, HistoryLimit); err != nil {
+		return fmt.Errorf("failed to trim history: %w", err)
+	}
+	if _, err := tx.Exec("DELETE FROM secrets WHERE key = ?", key); err != nil {
+		return fmt.Errorf("failed to delete secret: %w", err)
+	}
+	return tx.Commit()
 }
 
 // ListSecrets returns all secret keys
@@ -191,4 +339,46 @@ func (s *Store) ListSecrets() ([]string, error) {
 	}
 
 	return keys, nil
+}
+
+// ListConfig returns config entries whose key starts with prefix.
+func (s *Store) ListConfig(prefix string) (map[string][]byte, error) {
+	rows, err := s.db.Query("SELECT key, value FROM config WHERE key LIKE ? ESCAPE '\\'", escapeLike(prefix)+"%")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list config: %w", err)
+	}
+	defer rows.Close()
+	out := map[string][]byte{}
+	for rows.Next() {
+		var k string
+		var v []byte
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
+}
+
+// DeleteConfig removes a config entry; it reports ErrNotFound if absent.
+func (s *Store) DeleteConfig(key string) error {
+	res, err := s.db.Exec("DELETE FROM config WHERE key = ?", key)
+	if err != nil {
+		return fmt.Errorf("failed to delete config: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func escapeLike(s string) string {
+	r := ""
+	for _, c := range s {
+		if c == '%' || c == '_' || c == '\\' {
+			r += "\\"
+		}
+		r += string(c)
+	}
+	return r
 }

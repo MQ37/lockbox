@@ -124,15 +124,23 @@ lockbox init
 # Creates ~/.lockbox/lockbox.db
 ```
 
-### `lockbox set KEY VALUE`
+### `lockbox set KEY [VALUE]`
 
-Store a secret. Values are encrypted before storage.
+Store a secret. The value comes from exactly one of the `VALUE` argument, `--stdin` or `--file`. Prefer `--stdin`/`--file`: a value on the command line shows up in the process list and shell history, and a value starting with `-` cannot be passed as an argument at all.
 
 ```bash
-lockbox set API_KEY "sk-xxxxx"
-lockbox set DATABASE_URL "postgres://user:pass@localhost/mydb"
+printf %s "$TOKEN" | lockbox set API_KEY --stdin
+lockbox set API_KEY --file /dev/shm/token.txt --no-overwrite
 lockbox set WEBHOOK_SECRET "whsec_1234567890abcdef"
 ```
+
+- `--stdin`/`--file` drop one trailing newline (`--raw` keeps the input exactly); `--trim` strips all surrounding whitespace from any source.
+- An empty value is refused (`--allow-empty` overrides), so a failed `$(command)` cannot blank a secret.
+- Setting an existing key keeps the previous value; `--no-overwrite` refuses instead. See `history` and `rollback` below.
+
+### `lockbox history KEY` / `lockbox rollback KEY`
+
+The last 5 previous values of every key are kept (encrypted). `rollback` restores the newest one, swapping the current value into the history so it can be undone; it also brings back a key removed by `delete`.
 
 ### `lockbox get KEY`
 
@@ -152,17 +160,28 @@ lockbox delete OLD_SECRET
 # Removed: OLD_SECRET
 ```
 
-### `lockbox list`
+### `lockbox list [--grep PATTERN] [--json] [-v] [--remote URL]`
 
-List all secret keys (not values). Useful for auditing what's stored.
+List secret keys (never values).
 
 ```bash
-lockbox list
-# Keys:
-# - API_KEY
-# - DATABASE_URL
-# - WEBHOOK_SECRET
+lockbox list                  # one key per line
+lockbox list --grep wallet    # case-insensitive pattern; no match = no output, exit 1
+lockbox list --json           # [{"key":..,"created_at":..,"updated_at":..}]
+lockbox list -v               # key and last-updated time
 ```
+
+### `lockbox has KEY...` and `lockbox check KEY...`
+
+Inspect secrets without reading them.
+
+```bash
+lockbox has API_TOKEN MAIN_WALLET_KEY && echo ready   # prints nothing; exit 1 if any is missing or empty
+lockbox check MAIN_WALLET_KEY
+# MAIN_WALLET_KEY: set, length 64, hex, 32 bytes WITHOUT 0x prefix, updated 2026-01-15T09:30:00Z UTC
+```
+
+`check` reports the length, a coarse shape class (EVM key/address shape, Solana key length, URL scheme, known token prefix such as `ghp_`, PEM, JWT-like), the last-updated time and warnings (trailing newline, surrounding spaces, multi-line). It never prints any part of the value. `--json` for machine output; `--remote` works for both.
 
 ### `lockbox env [--remote URL]`
 
@@ -210,6 +229,36 @@ lockbox run --remote http://lockbox-server:8080 -- bash deploy.sh
 ```
 
 > **Note:** The `-c` and `--` modes are mutually exclusive — you cannot use both at the same time.
+
+**Scope what the command can see.** Without options `run` injects *every* stored secret. Narrow it:
+
+```bash
+lockbox run --only API_TOKEN -c 'curl -H "Authorization: Bearer $API_TOKEN" https://api.example.com/v1/me'
+lockbox run --only A,B -- ./deploy.sh                       # a missing key aborts before the command starts
+lockbox run --as PAYER_KEY=MAIN_WALLET_KEY -- node pay.js   # inject under another name (also scopes)
+lockbox run --all --as CI_TOKEN=NPM_TOKEN -- ./job.sh      # everything, plus an alias
+lockbox run -p myproject -- make test                      # saved profile (below)
+```
+
+**Redact output.** `--redact` (or `LOCKBOX_REDACT=1`) masks the injected values in the command's stdout and stderr as `***NAME***`, including base64 and URL-escaped forms, each line of multi-line values, and values split across output chunks:
+
+```bash
+lockbox run --only API_TOKEN --redact -c 'env | grep API_'   # API_TOKEN=***API_TOKEN***
+```
+
+Limits: values shorter than 8 bytes are not masked; the child sees pipes instead of a terminal; and because it rewrites stdout, do not use it when stdout carries a secret you need to capture. It is opt-in for that reason.
+
+### `lockbox profile`
+
+A profile is a saved set of `--only`/`--as`/`--all`/`--redact` options (key names only, no values), so a project always gets exactly its own secrets:
+
+```bash
+lockbox profile set myapp --only MAIN_WALLET_KEY,BACKUP_WALLET_KEY --as PAYER_KEY=MAIN_WALLET_KEY --redact
+lockbox run -p myapp -- go test ./...
+lockbox profile list | show NAME | delete NAME
+```
+
+Flags given on the command line are added on top of the profile.
 
 ### `lockbox serve [--port PORT]`
 
@@ -284,6 +333,9 @@ lockbox run --remote localhost:8100 -c 'echo $API_KEY'
 # Run command with remote secrets (direct mode)
 lockbox run --remote localhost:8100 -- npm test
 
+# Scoping, redaction, list/has/check also work remotely
+lockbox run --remote localhost:8100 --only API_KEY -- npm test
+
 # Load remote secrets into shell
 eval $(lockbox env --remote localhost:8100)
 ```
@@ -295,6 +347,7 @@ eval $(lockbox env --remote localhost:8100)
 - **Encryption**: All secret values are encrypted with **AES-256-GCM** before being written to disk
 - **Key storage**: A random encryption key is generated at init and stored in the database
 - **Obfuscation model**: This provides protection against casual reading, not against determined attackers with full DB access
+- **File permissions**: the database file is created/kept at mode 0600
 - **No authentication**: Server mode has no auth - relies on localhost binding for security
 - **Server binding**: HTTP server binds to `127.0.0.1` only, preventing remote network access
 
@@ -350,6 +403,16 @@ cp ~/.lockbox/lockbox.db ./lockbox.db.backup
 
 # Restore
 cp ./lockbox.db.backup ~/.lockbox/lockbox.db
+```
+
+## Building
+
+Builds and tests run in rootless podman, offline, with RAM-only scratch (the Go module cache is mounted read-only):
+
+```bash
+./build.sh test    # gofmt check, go vet, go test
+./build.sh build   # static ./dist/lockbox
+./build.sh         # both
 ```
 
 ## FAQ
