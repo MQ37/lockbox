@@ -32,8 +32,10 @@ You normally never need to read a value.
 
 ## Look up what exists (names only)
 ` + fence + `bash
-lockbox list --grep wallet          # keys matching a pattern
-lockbox list --json                 # with created/updated times
+lockbox list -v                     # keys with tags, date and NOTE: read this first to pick the right key
+lockbox list --tag env:mainnet      # filter by tag (repeat: all must match)
+lockbox list --grep wallet          # keys matching a name pattern
+lockbox list --json                 # full detail incl. note and tags
 lockbox has API_TOKEN MAIN_WALLET_KEY && echo ready   # exit 0 if all set and non-empty
 lockbox check MAIN_WALLET_KEY       # length, shape (e.g. 0x-hex 32 bytes), warnings; never the value
 ` + fence + `
@@ -43,22 +45,26 @@ lockbox check MAIN_WALLET_KEY       # length, shape (e.g. 0x-hex 32 bytes), warn
 lockbox run --only API_TOKEN -c 'curl -s -H "Authorization: Bearer $API_TOKEN" https://api.example.com/v1/me'
 lockbox run --as PAYER_KEY=MAIN_WALLET_KEY -- node pay.js     # rename on injection
 lockbox run --only API_TOKEN --redact -c './script.sh'          # mask values in output as ***NAME***
+lockbox run --tag project:myproject -- make test                  # every key tagged project:myproject
 lockbox run -p myproject -- make test                             # saved profile
 ` + fence + `
 - A missing key aborts before the command starts.
 - Without --only/--as/-p, every secret is injected (old behaviour); avoid that.
 - --redact changes stdout/stderr (values of 8+ bytes become ***NAME***). Do not use it when stdout is a secret you need to capture.
-- Profiles: ` + "`lockbox profile set NAME --only A,B --as X=Y --redact`" + `, ` + "`profile list|show|delete`" + `.
+- Profiles: ` + "`lockbox profile set NAME --only A,B --as X=Y --tag T --redact`" + `, ` + "`profile list|show|delete`" + `.
+- Read each key's note before using it (` + "`list -v`" + `): notes say which project or network a key is for and what it must not be used for. If a key has no note, ask before using it for anything that spends money.
 
 ## Store or change a secret
 ` + fence + `bash
 printf %s "$VALUE" | lockbox set API_KEY --stdin     # or: --file path
-lockbox set API_KEY --file /dev/shm/key --trim --no-overwrite
+lockbox set API_KEY --file /dev/shm/key --trim --no-overwrite --note "what it is for" --tag env:testnet
+lockbox note API_KEY "text"   # or --clear;  lockbox tag add|rm API_KEY env:prod;  lockbox tag list
 lockbox history API_KEY       # previous values are kept (last 5)
 lockbox rollback API_KEY      # restore the previous value (also undoes a delete)
 ` + fence + `
 - --stdin/--file drop one trailing newline; --trim strips all surrounding whitespace.
 - An empty value is refused (--allow-empty overrides).
+- Notes and tags are PLAINTEXT, one-line, never a secret (text containing a stored value is refused). Add a note whenever you create a secret.
 ` + learnCommon + `
 ## Only when you must read a raw value
 ` + "`lockbox get KEY`" + ` prints it to stdout, into your own context. Prefer ` + "`run`" + `.

@@ -167,9 +167,28 @@ List secret keys (never values).
 ```bash
 lockbox list                  # one key per line
 lockbox list --grep wallet    # case-insensitive pattern; no match = no output, exit 1
-lockbox list --json           # [{"key":..,"created_at":..,"updated_at":..}]
-lockbox list -v               # key and last-updated time
+lockbox list --json           # [{"key","created_at","updated_at","note","tags"}]
+lockbox list -v               # key, tags, last-updated date and note (aligned columns)
+lockbox list --tag env:mainnet --tag kind:wallet-key   # keys carrying ALL these tags
 ```
+
+### Notes and tags: see what is what
+
+A note says what a secret is for; tags label it. Both make `lockbox list -v` answer "which key do I use for X?" without a separate document.
+
+```bash
+lockbox set WALLET_KEY --stdin --note "personal wallet, hex without 0x, myapp tests only" --tag env:mainnet --tag kind:wallet-key
+lockbox note WALLET_KEY "new text"        # also: lockbox note WALLET_KEY (print), --clear
+lockbox tag add WALLET_KEY owner:me       # lockbox tag rm KEY TAG...; lockbox tag list (all tags with counts)
+lockbox list -v
+# WALLET_KEY  env:mainnet kind:wallet-key owner:me  2026-01-15  personal wallet, hex without 0x, myapp tests only
+lockbox run --tag project:myapp -- go test ./...   # inject every key tagged project:myapp
+```
+
+- A note is one line (max 300 bytes). Tags are lowercase `a-z 0-9 _ . : -` (max 64 characters, max 16 per key); a `key:value` form such as `env:testnet`, `kind:token`, `owner:me`, `project:myapp` works well.
+- **Notes and tags are stored in plaintext** (so `list` can filter on them). Text containing any stored secret value of 8+ bytes, or the value being stored, is refused.
+- `run --tag` (repeat for AND) and profile `--tag` resolve at run time, so a key tagged later joins automatically; a tag nobody carries is an error, never an empty run.
+- Notes and tags belong to the key: deleting a key hides them, `rollback` brings them back with it. `check` shows them too, and the server exposes them (no values) on `GET /meta`.
 
 ### `lockbox has KEY...` and `lockbox check KEY...`
 
@@ -250,7 +269,7 @@ Limits: values shorter than 8 bytes are not masked; the child sees pipes instead
 
 ### `lockbox profile`
 
-A profile is a saved set of `--only`/`--as`/`--all`/`--redact` options (key names only, no values), so a project always gets exactly its own secrets:
+A profile is a saved set of `--only`/`--as`/`--tag`/`--all`/`--redact` options (key names only, no values), so a project always gets exactly its own secrets:
 
 ```bash
 lockbox profile set myapp --only MAIN_WALLET_KEY,BACKUP_WALLET_KEY --as PAYER_KEY=MAIN_WALLET_KEY --redact
@@ -301,6 +320,15 @@ List all secret keys as JSON array.
 ```bash
 curl http://localhost:8100/secrets
 # ["API_KEY", "DATABASE_URL", "WEBHOOK_SECRET"]
+```
+
+#### `GET /meta`
+
+Notes and tags per key as JSON (no values). Older servers lack it; clients fall back to plain key lists.
+
+```bash
+curl http://localhost:8100/meta
+# {"API_KEY":{"note":"what it is for","tags":["env:prod"]}}
 ```
 
 #### `GET /secrets/:key`

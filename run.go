@@ -11,7 +11,7 @@ import (
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
-var version = "1.1.0"
+var version = "1.2.0"
 
 func newRunCmd() *cobra.Command {
 	c := &cobra.Command{
@@ -29,6 +29,7 @@ Without scoping options EVERY stored secret is injected. Scope it:
   --only A,B          inject only these keys (error if one is missing)
   --as NEW=STORED     inject STORED under the name NEW (also scopes)
   --all               with --as/--only: also inject everything else
+  --tag T             inject every key tagged T (repeat for AND), resolved at run time
   -p, --profile NAME  apply a saved profile (see: lockbox profile --help)
   --redact            mask injected secret values in the command's stdout and
                       stderr as ***NAME*** (also LOCKBOX_REDACT=1)
@@ -46,6 +47,7 @@ alters stdout, so do not use it when stdout carries a secret you need.`,
 			profName, _ := cmd.Flags().GetString("profile")
 			onlyRaw, _ := cmd.Flags().GetStringArray("only")
 			asRaw, _ := cmd.Flags().GetStringArray("as")
+			tagRaw, _ := cmd.Flags().GetStringArray("tag")
 			all, _ := cmd.Flags().GetBool("all")
 			redact, _ := cmd.Flags().GetBool("redact")
 
@@ -63,7 +65,11 @@ alters stdout, so do not use it when stdout carries a secret you need.`,
 			if err != nil {
 				fatal("%v", err)
 			}
-			sc := scope{only: splitList(onlyRaw), as: as, all: all, redact: redact}
+			tags, err := normTags(tagRaw)
+			if err != nil {
+				fatal("%v", err)
+			}
+			sc := scope{only: splitList(onlyRaw), as: as, tags: tags, all: all, redact: redact}
 			if v := os.Getenv("LOCKBOX_REDACT"); v == "1" || strings.EqualFold(v, "true") {
 				sc.redact = true
 			}
@@ -126,7 +132,8 @@ alters stdout, so do not use it when stdout carries a secret you need.`,
 	c.Flags().StringP("cmd", "c", "", "Shell script to execute (runs via sh -c, enabling $VAR expansion)")
 	c.Flags().StringArrayP("only", "o", nil, "inject only these keys (comma-separated, repeatable)")
 	c.Flags().StringArray("as", nil, "NEW_NAME=STORED_KEY: inject STORED_KEY under NEW_NAME")
-	c.Flags().Bool("all", false, "with --only/--as: also inject all other secrets")
+	c.Flags().StringArray("tag", nil, "inject every key carrying this tag (repeat: all must match)")
+	c.Flags().Bool("all", false, "with --only/--as/--tag: also inject all other secrets")
 	c.Flags().StringP("profile", "p", "", "apply a saved profile")
 	c.Flags().Bool("redact", false, "mask injected secret values in output")
 	return c

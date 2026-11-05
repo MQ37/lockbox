@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -92,6 +94,17 @@ func (s *Store) migrate() error {
 		replaced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
 	CREATE INDEX IF NOT EXISTS secret_history_key ON secret_history (key, id);
+
+	CREATE TABLE IF NOT EXISTS secret_meta (
+		key TEXT PRIMARY KEY,
+		note TEXT NOT NULL DEFAULT ''
+	);
+	CREATE TABLE IF NOT EXISTS secret_tags (
+		key TEXT NOT NULL,
+		tag TEXT NOT NULL,
+		PRIMARY KEY (key, tag)
+	);
+	CREATE INDEX IF NOT EXISTS secret_tags_tag ON secret_tags (tag);
 	`
 
 	_, err := s.db.Exec(schema)
@@ -182,9 +195,11 @@ func (s *Store) HasSecret(key string) (bool, error) {
 
 // SecretMeta is the non-secret information about a stored key.
 type SecretMeta struct {
-	Key       string `json:"key"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	Key       string   `json:"key"`
+	CreatedAt string   `json:"created_at,omitempty"`
+	UpdatedAt string   `json:"updated_at,omitempty"`
+	Note      string   `json:"note"`
+	Tags      []string `json:"tags"`
 }
 
 // SecretInfo returns timestamps for a key.
@@ -212,7 +227,22 @@ func (s *Store) ListSecretMeta() ([]SecretMeta, error) {
 		}
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	all, err := s.AllMeta()
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		m := all[out[i].Key]
+		out[i].Note, out[i].Tags = m.Note, m.Tags
+		if out[i].Tags == nil {
+			out[i].Tags = []string{}
+		}
+	}
+	return out, nil
 }
 
 // HistoryEntry is one previous value of a key (value stays encrypted).
@@ -381,4 +411,153 @@ func escapeLike(s string) string {
 		r += string(c)
 	}
 	return r
+}
+
+// ---- notes and tags --------------------------------------------------------
+
+// Limits and validation for notes and tags. Both are stored in plaintext.
+const (
+	MaxNoteLen = 300
+	MaxTags    = 16
+)
+
+var tagRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_.:-]{0,63}$`)
+
+// NormalizeTag lowercases and validates a tag.
+func NormalizeTag(t string) (string, error) {
+	t = strings.ToLower(strings.TrimSpace(t))
+	if !tagRe.MatchString(t) {
+		return "", fmt.Errorf("invalid tag %q (use lowercase letters, digits and _ . : -, up to 64 characters)", t)
+	}
+	return t, nil
+}
+
+// ValidateNote checks a note: one line, bounded length.
+func ValidateNote(n string) error {
+	if strings.ContainsAny(n, "\r\n") {
+		return errors.New("a note must be a single line")
+	}
+	if len(n) > MaxNoteLen {
+		return fmt.Errorf("note too long (%d bytes, max %d)", len(n), MaxNoteLen)
+	}
+	return nil
+}
+
+// Meta is the plaintext note and tags of one key.
+type Meta struct {
+	Note string   `json:"note"`
+	Tags []string `json:"tags"`
+}
+
+// SetNote sets (or, with "", clears) the note of an existing key.
+func (s *Store) SetNote(key, note string) error {
+	if err := ValidateNote(note); err != nil {
+		return err
+	}
+	if ok, err := s.HasSecret(key); err != nil {
+		return err
+	} else if !ok {
+		return ErrNotFound
+	}
+	_, err := s.db.Exec(`INSERT INTO secret_meta (key, note) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET note = excluded.note`, key, strings.TrimSpace(note))
+	if err != nil {
+		return fmt.Errorf("failed to set note: %w", err)
+	}
+	return nil
+}
+
+// AddTags adds tags to an existing key (already normalized by the caller).
+func (s *Store) AddTags(key string, tags []string) error {
+	if ok, err := s.HasSecret(key); err != nil {
+		return err
+	} else if !ok {
+		return ErrNotFound
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, t := range tags {
+		if _, err := tx.Exec("INSERT OR IGNORE INTO secret_tags (key, tag) VALUES (?, ?)", key, t); err != nil {
+			return fmt.Errorf("failed to add tag: %w", err)
+		}
+	}
+	var n int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM secret_tags WHERE key = ?", key).Scan(&n); err != nil {
+		return err
+	}
+	if n > MaxTags {
+		return fmt.Errorf("too many tags on '%s' (%d, max %d)", key, n, MaxTags)
+	}
+	return tx.Commit()
+}
+
+// RemoveTags removes tags from a key and reports how many were present.
+func (s *Store) RemoveTags(key string, tags []string) (int, error) {
+	removed := 0
+	for _, t := range tags {
+		res, err := s.db.Exec("DELETE FROM secret_tags WHERE key = ? AND tag = ?", key, t)
+		if err != nil {
+			return removed, fmt.Errorf("failed to remove tag: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// AllMeta returns notes and tags (sorted) for every key that has any, limited
+// to keys that currently exist as secrets.
+func (s *Store) AllMeta() (map[string]Meta, error) {
+	out := map[string]Meta{}
+	rows, err := s.db.Query(`SELECT m.key, m.note FROM secret_meta m JOIN secrets s ON s.key = m.key`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read notes: %w", err)
+	}
+	for rows.Next() {
+		var k, n string
+		if err := rows.Scan(&k, &n); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out[k] = Meta{Note: n}
+	}
+	rows.Close()
+	trows, err := s.db.Query(`SELECT t.key, t.tag FROM secret_tags t JOIN secrets s ON s.key = t.key ORDER BY t.key, t.tag`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tags: %w", err)
+	}
+	defer trows.Close()
+	for trows.Next() {
+		var k, t string
+		if err := trows.Scan(&k, &t); err != nil {
+			return nil, err
+		}
+		m := out[k]
+		m.Tags = append(m.Tags, t)
+		out[k] = m
+	}
+	return out, trows.Err()
+}
+
+// TagCounts returns how many existing keys carry each tag.
+func (s *Store) TagCounts() (map[string]int, error) {
+	rows, err := s.db.Query(`SELECT t.tag, COUNT(*) FROM secret_tags t JOIN secrets s ON s.key = t.key GROUP BY t.tag`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var t string
+		var n int
+		if err := rows.Scan(&t, &n); err != nil {
+			return nil, err
+		}
+		out[t] = n
+	}
+	return out, rows.Err()
 }

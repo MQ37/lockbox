@@ -226,6 +226,7 @@ Endpoints:
   GET /health - Returns {"status":"ok"}
   GET /secrets - Returns JSON array of all secret keys
   GET /secrets/:key - Returns decrypted secret value as plain text
+  GET /meta - Returns notes and tags per key as JSON (no values)
   GET /env - Returns all secrets in export KEY="value" format`,
 		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -255,6 +256,24 @@ Endpoints:
 				}
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(keys)
+			})
+
+			// Metadata endpoint - notes and tags (plaintext), never values
+			http.HandleFunc("/meta", func(w http.ResponseWriter, r *http.Request) {
+				all, err := store.AllMeta()
+				if err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					fmt.Fprintf(w, "Error: %v", err)
+					return
+				}
+				for k, v := range all {
+					if v.Tags == nil {
+						v.Tags = []string{}
+						all[k] = v
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(all)
 			})
 
 			// Env endpoint - returns export format
@@ -376,7 +395,7 @@ Endpoints:
 
 	// Add commands to root
 	rootCmd.AddCommand(initCmd, setCmd, getCmd, deleteCmd, listCmd, envCmd, runCmd, serveCmd, learnCmd,
-		newHasCmd(), newCheckCmd(), newProfileCmd(), newHistoryCmd(), newRollbackCmd())
+		newHasCmd(), newCheckCmd(), newProfileCmd(), newHistoryCmd(), newRollbackCmd(), newNoteCmd(), newTagCmd())
 
 	// Execute
 	if err := rootCmd.Execute(); err != nil {

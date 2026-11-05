@@ -299,11 +299,11 @@ func TestListGrepJSONVerbose(t *testing.T) {
 		t.Fatalf("no match: %d %q", c, o)
 	}
 	j, _, _ := lb("", nil, "list", "--json")
-	var m []map[string]string
+	var m []map[string]any
 	if err := json.Unmarshal([]byte(j), &m); err != nil || len(m) != 3 || m[0]["key"] != "MAIN_ADDR" || m[0]["updated_at"] == "" {
 		t.Fatalf("json: %v %q", err, j)
 	}
-	if v, _, _ := lb("", nil, "list", "-v"); !strings.Contains(v, "MAIN_ADDR\t20") {
+	if v, _, _ := lb("", nil, "list", "-v"); !strings.Contains(v, "MAIN_ADDR") || !strings.Contains(v, " 20") {
 		t.Fatalf("verbose: %q", v)
 	}
 	if o, _, _ := lb("", nil, "list"); strings.TrimSpace(o) != "MAIN_ADDR\nMAIN_WALLET_KEY\nOTHER" {

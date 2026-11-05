@@ -10,6 +10,12 @@ VERSION=${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo de
 base() { podman run --rm --network=none --read-only --tmpfs /tmp:exec,size=2g \
   -e GOPROXY=off -e GOTOOLCHAIN=local -e GOFLAGS=-buildvcs=false -e CGO_ENABLED=0 \
   -e GOCACHE=/tmp/gc -e GOMODCACHE=/mod -e HOME=/tmp/home -v "$MOD":/mod:ro "$@"; }
+# Safety: tests never see ~/.lockbox (the container has its own HOME and TestMain
+# redirects HOME again). As a belt-and-braces check, the real database's hash is
+# compared before and after; a change aborts loudly. Back up first for any real-data work.
+REAL=${LOCKBOX_REAL_DB:-$HOME/.lockbox/lockbox.db}
+before=""; [ -f "$REAL" ] && before=$(sha256sum "$REAL" | cut -d' ' -f1)
+trap 'if [ -n "$before" ] && [ "$(sha256sum "$REAL" | cut -d" " -f1)" != "$before" ]; then echo "!!! the real lockbox database CHANGED during build.sh: restore from your backup" >&2; fi' EXIT
 case "${1:-all}" in
   test|all)
     # copy the source to tmpfs: tests run the freshly built ./lockbox binary there
